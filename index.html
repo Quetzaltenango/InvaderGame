@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>インベーダーゲーム</title>
+<title>インベーダーゲーム - 完全版</title>
 <style>
   body { background: #222; text-align: center; color: white; font-family: sans-serif; }
   canvas { background: black; display: block; margin: 20px auto; border: 2px solid #555; }
@@ -10,119 +10,255 @@
 </head>
 <body>
   <h1>インベーダーゲーム</h1>
-  <p>左右キー：移動 / スペースキー：ビーム</p>
-  <canvas id="gameCanvas" width="400" height="400"></canvas>
+  <p>上下左右キー：移動 / スペースキー：ビーム（ボス戦は長押しで貫通ビーム）</p>
+  <canvas id="gameCanvas" width="600" height="400"></canvas>
 
   <script>
     const canvas = document.getElementById("gameCanvas");
     const ctx = canvas.getContext("2d");
 
-    let player = { x: 180, y: 350, w: 40, h: 20, speed: 5, hp: 10 };
+    let player = { x: 20, y: 190, w: 10, h: 20, hp: 10, speed: 5 };
     let bullets = [];
     let enemies = [];
     let walls = [];
     let keys = {};
+    let prevSpace = false;
     let enemyDir = 1;
-    let enemySpeed = 1;
     let gameOver = false;
+    let gameClear = false;
 
-    // 敵を18体（3列×6）配置
-    for (let r = 0; r < 3; r++) {
-      for (let c = 0; c < 6; c++) {
-        enemies.push({ x: 30 + c * 50, y: 30 + r * 40, w: 30, h: 20, active: true });
+    // ボス戦用変数
+    let isBossBattle = false;
+    let chargeTime = 0;
+    let bossOffsetX = 600;
+    let bossParts = [];
+    let bossWalls = [];
+
+    // 敵を100体（10列×10行）配置
+    for (let c = 0; c < 10; c++) {
+      for (let r = 0; r < 10; r++) {
+        enemies.push({ x: 350 + c * 20, y: 30 + r * 30, w: 15, h: 10, active: true });
       }
     }
     
-    // 壁を6つ（1列×6）配置（敵18：壁6 = 3:1）
-    for (let c = 0; c < 6; c++) {
-      walls.push({ x: 30 + c * 55, y: 220, w: 30, h: 20, speed: 2 });
+    // 壁を3列配置（動く壁）
+    for (let c = 0; c < 3; c++) {
+      for (let r = 0; r < 5; r++) {
+        walls.push({ x: 150 + c * 60, y: 40 + r * 70, w: 15, h: 10, speed: 2 * (c % 2 === 0 ? 1 : -1) });
+      }
+    }
+
+    const bossPattern = [
+      "  W W W W W W W W  ",
+      " W               W ",
+      "W  OOO BBB JJJ    W",
+      "W  O O B B   J    W",
+      "W  O O BBB   J    W",
+      "W  O O B B J J    W",
+      "W  OOO BBB  JJ    W",
+      " W               W ",
+      "  W W W W W W W W  ",
+      " W               W ",
+      "W  OOO BBB JJJ    W",
+      "W  O O B B   J    W",
+      "W  O O BBB   J    W",
+      "W  O O B B J J    W",
+      "W  OOO BBB  JJ    W",
+      " W               W ",
+      "  W W W W W W W W  "
+    ];
+
+    function initBoss() {
+      for (let r = 0; r < bossPattern.length; r++) {
+        let rowStr = bossPattern[r];
+        for (let c = 0; c < rowStr.length; c++) {
+          let char = rowStr[c];
+          let block = { r: r, c: c, w: 15, h: 15 };
+          if (char === 'W') bossWalls.push(block);
+          else if (char !== ' ') bossParts.push(block);
+        }
+      }
     }
 
     document.addEventListener("keydown", (e) => keys[e.code] = true);
     document.addEventListener("keyup", (e) => keys[e.code] = false);
 
-    function update() {
-      if (gameOver) return;
+    function rectIntersect(r1, r2) {
+      return !(r2.x > r1.x + r1.w || r2.x + r2.w < r1.x || r2.y > r1.y + r1.h || r2.y + r2.h < r1.y);
+    }
 
-      // プレイヤーの移動
+    function update() {
+      if (gameOver || gameClear) return;
+
+      // プレイヤー移動
+      if (keys["ArrowUp"] && player.y > 0) player.y -= player.speed;
+      if (keys["ArrowDown"] && player.y < canvas.height - player.h) player.y += player.speed;
       if (keys["ArrowLeft"] && player.x > 0) player.x -= player.speed;
-      if (keys["ArrowRight"] && player.x < canvas.width - player.w) player.x += player.speed;
-      
-      // ビーム発射（画面内に自分のビームがない時のみ）
-      if (keys["Space"]) {
-        let hasMyBullet = bullets.some(b => b.vy < 0);
-        if (!hasMyBullet) {
-          bullets.push({ x: player.x + player.w / 2 - 2, y: player.y, w: 4, h: 10, vy: -7 });
-        }
-        keys["Space"] = false; 
+      if (keys["ArrowRight"] && player.x < canvas.width / 2) player.x += player.speed;
+
+      let activeCount = enemies.filter(e => e.active).length;
+
+      // ボス戦移行チェック
+      if (activeCount === 0 && !isBossBattle) {
+        isBossBattle = true;
+        initBoss();
+        bullets = []; // 画面の玉をリセット
       }
 
-      // 敵の移動
-      let hitEdge = false;
-      enemies.forEach(e => {
-        if (e.active) {
-          e.x += enemySpeed * enemyDir;
-          if (e.x < 0 || e.x + e.w > canvas.width) hitEdge = true;
+      // ビーム発射制御
+      if (!isBossBattle) {
+        if (keys["Space"] && !prevSpace) {
+          bullets.push({ x: player.x + player.w, y: player.y + player.h / 2 - 2, w: 8, h: 4, vx: 8, vy: 0 });
+          if (activeCount <= 66) {
+            bullets.push({ x: player.x + player.w, y: player.y + player.h / 2 - 2, w: 8, h: 4, vx: 8, vy: -4 });
+          }
+          if (activeCount <= 10) {
+            bullets.push({ x: player.x + player.w, y: player.y + player.h / 2 - 2, w: 8, h: 4, vx: 8, vy: 4 });
+          }
         }
-      });
-      if (hitEdge) {
-        enemyDir *= -1;
+      } else {
+        if (keys["Space"]) {
+          chargeTime++;
+        } else if (prevSpace && !keys["Space"]) {
+          if (chargeTime >= 180) { // 約3秒 (60FPS想定)
+            bullets.push({ x: player.x + player.w, y: player.y - 5, w: 30, h: 30, vx: 10, vy: 0, isBig: true });
+          } else {
+            bullets.push({ x: player.x + player.w, y: player.y + player.h / 2 - 2, w: 8, h: 4, vx: 8, vy: 0 });
+          }
+          chargeTime = 0;
+        }
+      }
+      prevSpace = keys["Space"];
+
+      // 敵の移動速度計算
+      let curSpeed = activeCount <= 10 ? 4 : activeCount <= 33 ? 3 : activeCount <= 66 ? 2 : 1;
+
+      // ボス戦／通常戦の更新
+      if (isBossBattle) {
+        if (bossOffsetX > 320) bossOffsetX -= 2;
+        
+        let updateBossBlocks = (blocks) => {
+          blocks.forEach(b => {
+            b.x = bossOffsetX + b.c * 15;
+            b.y = 10 + b.r * 22;
+          });
+        };
+        updateBossBlocks(bossWalls);
+        updateBossBlocks(bossParts);
+
+        if (bossParts.length === 0 && bossOffsetX <= 320) {
+          gameClear = true;
+        }
+      } else {
+        let hitEdge = false;
         enemies.forEach(e => {
           if (e.active) {
-            e.x += enemySpeed * enemyDir;
-            e.y += 10;
+            e.y += curSpeed * enemyDir;
+            if (e.y < 0 || e.y + e.h > canvas.height) hitEdge = true;
+            // 敵がプレイヤーに接触
+            if (rectIntersect(e, player)) {
+              player.hp -= 1;
+              e.active = false;
+              if (player.hp <= 0) gameOver = true;
+            }
           }
         });
+        if (hitEdge) {
+          enemyDir *= -1;
+          enemies.forEach(e => {
+            if (e.active) {
+              e.y += curSpeed * enemyDir;
+              e.x -= 10;
+            }
+          });
+        }
       }
 
       // 壁の移動
       walls.forEach(w => {
-        w.x += w.speed;
-        if (w.x < 0 || w.x + w.w > canvas.width) w.speed *= -1;
+        w.y += w.speed;
+        if (w.y < 0 || w.y + w.h > canvas.height) w.speed *= -1;
       });
 
       // ビームの移動と当たり判定
       for (let i = bullets.length - 1; i >= 0; i--) {
         let b = bullets[i];
+        b.x += b.vx;
         b.y += b.vy;
 
-        // 画面外に出たら消す
-        if (b.y < 0 || b.y > canvas.height) {
+        // 上下の壁で跳ね返る
+        if (b.y <= 0 || b.y + b.h >= canvas.height) {
+          b.vy *= -1;
+          // 画面外に飛び出さないよう補正
+          b.y = b.y <= 0 ? 1 : canvas.height - b.h - 1;
+        }
+
+        if (b.x < 0 || b.x > canvas.width) {
           bullets.splice(i, 1);
           continue;
         }
 
-        // 壁との当たり判定（跳ね返り）
         let hitWall = false;
+        // 通常の壁との判定
         walls.forEach(w => {
-          if (b.x < w.x + w.w && b.x + b.w > w.x && b.y < w.y + w.h && b.y + b.h > w.y) {
-            b.vy = 7; // 下向きに跳ね返る
-            b.y = w.y + w.h + 1;
-            hitWall = true;
+          if (!hitWall && rectIntersect(b, w)) {
+            if (b.isBig) {
+              w.x = -1000; // 巨大ビームは壁を破壊
+            } else {
+              b.vx *= -1;
+              b.isEnemyBullet = true;
+              hitWall = true;
+            }
           }
         });
         if (hitWall) continue;
 
-        // 敵との当たり判定（上向きビームのみ）
-        if (b.vy < 0) {
+        if (isBossBattle) {
+          // ボスの壁との判定
+          for (let j = bossWalls.length - 1; j >= 0; j--) {
+            if (rectIntersect(b, bossWalls[j])) {
+              if (b.isBig) {
+                bossWalls.splice(j, 1); // 巨大ビームでボス壁破壊
+              } else {
+                b.vx *= -1;
+                b.isEnemyBullet = true;
+                hitWall = true;
+              }
+              break; // 1つの玉で同時に複数壊さない
+            }
+          }
+          if (hitWall) continue;
+
+          // ボス本体（OBJ）との判定
+          if (!b.isEnemyBullet) {
+            for (let j = bossParts.length - 1; j >= 0; j--) {
+              if (rectIntersect(b, bossParts[j])) {
+                bossParts.splice(j, 1);
+                if (!b.isBig) bullets.splice(i, 1); // 通常弾は消える（貫通しない）
+                break;
+              }
+            }
+          }
+        } else {
+          // 通常の敵との判定
           let hitEnemy = false;
           enemies.forEach(e => {
-            if (e.active && !hitEnemy && b.x < e.x + e.w && b.x + b.w > e.x && b.y < e.y + e.h && b.y + b.h > e.y) {
+            if (e.active && !b.isEnemyBullet && rectIntersect(b, e)) {
               e.active = false;
-              bullets.splice(i, 1);
-              hitEnemy = true;
+              if (!b.isBig) {
+                bullets.splice(i, 1);
+                hitEnemy = true;
+              }
             }
           });
           if (hitEnemy) continue;
         }
 
-        // プレイヤーとの当たり判定（下向きビームのみ）
-        if (b.vy > 0) {
-          if (b.x < player.x + player.w && b.x + b.w > player.x && b.y < player.y + player.h && b.y + b.h > player.y) {
-            player.hp -= 1;
-            bullets.splice(i, 1);
-            if (player.hp <= 0) gameOver = true;
-          }
+        // プレイヤー被弾判定（跳ね返った玉）
+        if (b.isEnemyBullet && rectIntersect(b, player)) {
+          player.hp -= 1;
+          bullets.splice(i, 1);
+          if (player.hp <= 0) gameOver = true;
         }
       }
     }
@@ -130,43 +266,57 @@
     function draw() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       
-      // プレイヤーを描画（緑）
+      // プレイヤー（緑）
       ctx.fillStyle = "lime";
       ctx.fillRect(player.x, player.y, player.w, player.h);
 
-      // HPを描画
+      // HP・チャージ表示
       ctx.fillStyle = "white";
       ctx.font = "16px sans-serif";
       ctx.fillText(`HP: ${player.hp}`, 10, 20);
+      if (isBossBattle) {
+        let chargePercent = Math.min(100, Math.floor((chargeTime / 180) * 100));
+        ctx.fillStyle = chargePercent === 100 ? "yellow" : "white";
+        ctx.fillText(`CHARGE: ${chargePercent}%`, 100, 20);
+      } else {
+        let activeCount = enemies.filter(e => e.active).length;
+        ctx.fillText(`ENEMY: ${activeCount}`, 100, 20);
+      }
 
-      // ビームを描画（白：上向き、オレンジ：跳ね返り）
+      // ビーム
       bullets.forEach(b => {
-        ctx.fillStyle = b.vy < 0 ? "white" : "orange";
+        if (b.isBig) ctx.fillStyle = "cyan";
+        else ctx.fillStyle = b.isEnemyBullet ? "orange" : "white";
         ctx.fillRect(b.x, b.y, b.w, b.h);
       });
 
-      // 壁を描画（青）
+      // 通常の壁（青）
       ctx.fillStyle = "cyan";
       walls.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
 
-      // 敵を描画（赤）
-      ctx.fillStyle = "red";
-      let allCleared = true;
-      enemies.forEach(e => {
-        if (e.active) {
-          ctx.fillRect(e.x, e.y, e.w, e.h);
-          allCleared = false;
-        }
-      });
+      if (isBossBattle) {
+        // ボス壁（青紫）
+        ctx.fillStyle = "#8a2be2";
+        bossWalls.forEach(bw => ctx.fillRect(bw.x, bw.y, bw.w, bw.h));
+        // ボス本体（赤）
+        ctx.fillStyle = "red";
+        bossParts.forEach(bp => ctx.fillRect(bp.x, bp.y, bp.w, bp.h));
+      } else {
+        // 敵（赤）
+        ctx.fillStyle = "red";
+        enemies.forEach(e => {
+          if (e.active) ctx.fillRect(e.x, e.y, e.w, e.h);
+        });
+      }
 
-      if (allCleared) {
+      if (gameClear) {
         ctx.fillStyle = "yellow";
-        ctx.font = "30px sans-serif";
-        ctx.fillText("クリア！", 140, 200);
+        ctx.font = "40px sans-serif";
+        ctx.fillText("ALL CLEAR!!", 180, 200);
       } else if (gameOver) {
         ctx.fillStyle = "red";
-        ctx.font = "30px sans-serif";
-        ctx.fillText("ゲームオーバー", 100, 200);
+        ctx.font = "40px sans-serif";
+        ctx.fillText("GAME OVER", 180, 200);
       }
     }
 
