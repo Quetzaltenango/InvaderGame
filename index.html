@@ -17,49 +17,114 @@
     const canvas = document.getElementById("gameCanvas");
     const ctx = canvas.getContext("2d");
 
-    let player = { x: 180, y: 350, w: 40, h: 20, speed: 5 };
+    let player = { x: 180, y: 350, w: 40, h: 20, speed: 5, hp: 10 };
     let bullets = [];
     let enemies = [];
+    let walls = [];
     let keys = {};
+    let enemyDir = 1;
+    let enemySpeed = 1;
+    let gameOver = false;
 
-    // 敵を配置
-    for (let r = 0; r < 4; r++) {
+    // 敵を18体（3列×6）配置
+    for (let r = 0; r < 3; r++) {
       for (let c = 0; c < 6; c++) {
         enemies.push({ x: 30 + c * 50, y: 30 + r * 40, w: 30, h: 20, active: true });
       }
+    }
+    
+    // 壁を6つ（1列×6）配置（敵18：壁6 = 3:1）
+    for (let c = 0; c < 6; c++) {
+      walls.push({ x: 30 + c * 55, y: 220, w: 30, h: 20, speed: 2 });
     }
 
     document.addEventListener("keydown", (e) => keys[e.code] = true);
     document.addEventListener("keyup", (e) => keys[e.code] = false);
 
     function update() {
+      if (gameOver) return;
+
       // プレイヤーの移動
       if (keys["ArrowLeft"] && player.x > 0) player.x -= player.speed;
       if (keys["ArrowRight"] && player.x < canvas.width - player.w) player.x += player.speed;
       
-      // ビーム発射
+      // ビーム発射（画面内に自分のビームがない時のみ）
       if (keys["Space"]) {
-        if (bullets.length === 0 || bullets[bullets.length - 1].y < 300) {
-          bullets.push({ x: player.x + player.w / 2 - 2, y: player.y, w: 4, h: 10, speed: 7 });
+        let hasMyBullet = bullets.some(b => b.vy < 0);
+        if (!hasMyBullet) {
+          bullets.push({ x: player.x + player.w / 2 - 2, y: player.y, w: 4, h: 10, vy: -7 });
         }
         keys["Space"] = false; 
       }
 
-      // ビームの移動
-      bullets.forEach((b, i) => {
-        b.y -= b.speed;
-        if (b.y < 0) bullets.splice(i, 1);
+      // 敵の移動
+      let hitEdge = false;
+      enemies.forEach(e => {
+        if (e.active) {
+          e.x += enemySpeed * enemyDir;
+          if (e.x < 0 || e.x + e.w > canvas.width) hitEdge = true;
+        }
       });
-
-      // 当たり判定
-      bullets.forEach((b, bi) => {
-        enemies.forEach((e) => {
-          if (e.active && b.x < e.x + e.w && b.x + b.w > e.x && b.y < e.y + e.h && b.y + b.h > e.y) {
-            e.active = false;
-            bullets.splice(bi, 1);
+      if (hitEdge) {
+        enemyDir *= -1;
+        enemies.forEach(e => {
+          if (e.active) {
+            e.x += enemySpeed * enemyDir;
+            e.y += 10;
           }
         });
+      }
+
+      // 壁の移動
+      walls.forEach(w => {
+        w.x += w.speed;
+        if (w.x < 0 || w.x + w.w > canvas.width) w.speed *= -1;
       });
+
+      // ビームの移動と当たり判定
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        let b = bullets[i];
+        b.y += b.vy;
+
+        // 画面外に出たら消す
+        if (b.y < 0 || b.y > canvas.height) {
+          bullets.splice(i, 1);
+          continue;
+        }
+
+        // 壁との当たり判定（跳ね返り）
+        let hitWall = false;
+        walls.forEach(w => {
+          if (b.x < w.x + w.w && b.x + b.w > w.x && b.y < w.y + w.h && b.y + b.h > w.y) {
+            b.vy = 7; // 下向きに跳ね返る
+            b.y = w.y + w.h + 1;
+            hitWall = true;
+          }
+        });
+        if (hitWall) continue;
+
+        // 敵との当たり判定（上向きビームのみ）
+        if (b.vy < 0) {
+          let hitEnemy = false;
+          enemies.forEach(e => {
+            if (e.active && !hitEnemy && b.x < e.x + e.w && b.x + b.w > e.x && b.y < e.y + e.h && b.y + b.h > e.y) {
+              e.active = false;
+              bullets.splice(i, 1);
+              hitEnemy = true;
+            }
+          });
+          if (hitEnemy) continue;
+        }
+
+        // プレイヤーとの当たり判定（下向きビームのみ）
+        if (b.vy > 0) {
+          if (b.x < player.x + player.w && b.x + b.w > player.x && b.y < player.y + player.h && b.y + b.h > player.y) {
+            player.hp -= 1;
+            bullets.splice(i, 1);
+            if (player.hp <= 0) gameOver = true;
+          }
+        }
+      }
     }
 
     function draw() {
@@ -69,9 +134,20 @@
       ctx.fillStyle = "lime";
       ctx.fillRect(player.x, player.y, player.w, player.h);
 
-      // ビームを描画（白）
+      // HPを描画
       ctx.fillStyle = "white";
-      bullets.forEach(b => ctx.fillRect(b.x, b.y, b.w, b.h));
+      ctx.font = "16px sans-serif";
+      ctx.fillText(`HP: ${player.hp}`, 10, 20);
+
+      // ビームを描画（白：上向き、オレンジ：跳ね返り）
+      bullets.forEach(b => {
+        ctx.fillStyle = b.vy < 0 ? "white" : "orange";
+        ctx.fillRect(b.x, b.y, b.w, b.h);
+      });
+
+      // 壁を描画（青）
+      ctx.fillStyle = "cyan";
+      walls.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
 
       // 敵を描画（赤）
       ctx.fillStyle = "red";
@@ -87,6 +163,10 @@
         ctx.fillStyle = "yellow";
         ctx.font = "30px sans-serif";
         ctx.fillText("クリア！", 140, 200);
+      } else if (gameOver) {
+        ctx.fillStyle = "red";
+        ctx.font = "30px sans-serif";
+        ctx.fillText("ゲームオーバー", 100, 200);
       }
     }
 
