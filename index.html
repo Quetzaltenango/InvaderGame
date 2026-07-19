@@ -10,7 +10,7 @@
 </head>
 <body>
   <h1>インベーダーゲーム</h1>
-  <p>移動：矢印キー / 通常弾：スペース / チャージ貫通弾：Enter長押し</p>
+  <p>移動：矢印キー / 通常弾：スペース / チャージ貫通弾：Enter または スペース長押し</p>
   <canvas id="gameCanvas" width="1200" height="400"></canvas>
 
   <script>
@@ -28,29 +28,30 @@
     let keys = {};
     let prevSpace = false;
     let prevEnter = false;
+    let enterCharge = 0;
+    let spaceCharge = 0;
     let enemyDir = 1;
     let gameOver = false;
     let gameClear = false;
 
     // ボス戦用変数
     let isBossBattle = false;
-    let chargeTime = 0;
     let bossOffsetX = 1200;
     let bossParts = [];
     let bossWalls = [];
     let bossWallTimer = 0;
     let bossAttackTimer = 0;
-    let bossBlocks = []; // 反射ブロック
-    let bossTargetBlocks = []; // 狙い撃ちブロック（撃ち落とし可）
+    let bossBlocks = [];
+    let bossTargetBlocks = [];
 
-    // 敵を100体（10列×10行）右側に配置
+    // 敵を100体配置
     for (let c = 0; c < 10; c++) {
       for (let r = 0; r < 10; r++) {
         enemies.push({ x: 800 + c * 30, y: 30 + r * 30, w: 15, h: 10, active: true });
       }
     }
     
-    // 敵の壁を3列配置（動く壁、HP10）
+    // 敵の壁を3列配置
     for (let c = 0; c < 3; c++) {
       for (let r = 0; r < 5; r++) {
         walls.push({ x: 500 + c * 80, y: 40 + r * 70, w: 20, h: 10, hp: 10, speed: 2 * (c % 2 === 0 ? 1 : -1) });
@@ -99,7 +100,6 @@
     function update() {
       if (gameOver || gameClear) return;
 
-      // プレイヤー移動（裏技のため画面全体に制限緩和）
       if (keys["ArrowUp"] && player.y > 0) player.y -= player.speed;
       if (keys["ArrowDown"] && player.y < canvas.height - player.h) player.y += player.speed;
       if (keys["ArrowLeft"] && player.x > 0) player.x -= player.speed;
@@ -107,56 +107,55 @@
 
       let activeCount = enemies.filter(e => e.active).length;
 
-      // ボス戦移行チェック
       if (activeCount === 0 && !isBossBattle) {
         isBossBattle = true;
         initBoss();
         bullets = []; 
       }
 
-      // 裏技：敵の右側にいるか判定
       let maxEnemyX = -1;
       if (!isBossBattle && activeCount > 0) {
         maxEnemyX = Math.max(...enemies.filter(e => e.active).map(e => e.x));
       } else if (isBossBattle) {
-        maxEnemyX = bossOffsetX + 150; // ボスの大体の右端
+        maxEnemyX = bossOffsetX + 150; 
       }
       let isBehind = player.x > maxEnemyX && maxEnemyX !== -1;
       let bVx = isBehind ? -8 : 8;
       let bOffsetX = isBehind ? -8 : player.w;
 
-      // ビーム発射制御（通常：Space）
-      if (keys["Space"] && !prevSpace) {
+      function fireNormalBullet() {
         bullets.push({ x: player.x + bOffsetX, y: player.y + player.h / 2 - 2, w: 8, h: 4, vx: bVx, vy: 0 });
-        if (activeCount <= 66 || isBossBattle) {
-          bullets.push({ x: player.x + bOffsetX, y: player.y + player.h / 2 - 2, w: 8, h: 4, vx: bVx, vy: -4 });
-        }
-        if (activeCount <= 20 || isBossBattle) {
-          bullets.push({ x: player.x + bOffsetX, y: player.y + player.h / 2 - 2, w: 8, h: 4, vx: bVx, vy: 4 });
-        }
+        if (activeCount <= 66 || isBossBattle) bullets.push({ x: player.x + bOffsetX, y: player.y + player.h / 2 - 2, w: 8, h: 4, vx: bVx, vy: -4 });
+        if (activeCount <= 20 || isBossBattle) bullets.push({ x: player.x + bOffsetX, y: player.y + player.h / 2 - 2, w: 8, h: 4, vx: bVx, vy: 4 });
       }
-      prevSpace = keys["Space"];
 
-      // チャージ弾（Enter）
+      function fireChargeBullet() {
+        bullets.push({ x: player.x + (isBehind ? -30 : player.w), y: player.y - 5, w: 30, h: 30, vx: isBehind ? -10 : 10, vy: 0, isBig: true });
+        if (activeCount <= 66 || isBossBattle) bullets.push({ x: player.x + bOffsetX, y: player.y + player.h / 2 - 2, w: 8, h: 4, vx: bVx, vy: -4 });
+        if (activeCount <= 20 || isBossBattle) bullets.push({ x: player.x + bOffsetX, y: player.y + player.h / 2 - 2, w: 8, h: 4, vx: bVx, vy: 4 });
+      }
+
+      // Enterキー（チャージ専用）
       if (keys["Enter"]) {
-        chargeTime++;
+        enterCharge++;
       } else if (prevEnter && !keys["Enter"]) {
-        if (chargeTime >= 180) { // 3秒チャージ完了
-          bullets.push({ x: player.x + (isBehind ? -30 : player.w), y: player.y - 5, w: 30, h: 30, vx: isBehind ? -10 : 10, vy: 0, isBig: true });
-          // チャージ時も上下の弾を出す
-          if (activeCount <= 66 || isBossBattle) bullets.push({ x: player.x + bOffsetX, y: player.y + player.h / 2 - 2, w: 8, h: 4, vx: bVx, vy: -4 });
-          if (activeCount <= 20 || isBossBattle) bullets.push({ x: player.x + bOffsetX, y: player.y + player.h / 2 - 2, w: 8, h: 4, vx: bVx, vy: 4 });
-        } else { // チャージ不足の場合は通常の正面弾
-          bullets.push({ x: player.x + bOffsetX, y: player.y + player.h / 2 - 2, w: 8, h: 4, vx: bVx, vy: 0 });
-        }
-        chargeTime = 0;
+        if (enterCharge >= 180) fireChargeBullet();
+        enterCharge = 0;
       }
       prevEnter = keys["Enter"];
 
-      // 敵の移動速度計算
+      // スペースキー（通常弾 兼 チャージ）
+      if (keys["Space"]) {
+        if (!prevSpace) fireNormalBullet();
+        spaceCharge++;
+      } else if (prevSpace && !keys["Space"]) {
+        if (spaceCharge >= 180) fireChargeBullet();
+        spaceCharge = 0;
+      }
+      prevSpace = keys["Space"];
+
       let curSpeed = activeCount <= 10 ? 4 : activeCount <= 33 ? 3 : activeCount <= 66 ? 2 : 1;
 
-      // ボス戦／通常戦の更新
       if (isBossBattle) {
         if (bossOffsetX > 800) bossOffsetX -= 2;
         
@@ -169,7 +168,6 @@
         updateBossBlocks(bossWalls);
         updateBossBlocks(bossParts);
 
-        // ボスの壁再生（約5秒ごと）
         bossWallTimer++;
         if (bossWallTimer >= 300) {
           bossWalls = [];
@@ -183,21 +181,16 @@
           bossWallTimer = 0;
         }
 
-        // ボスの紫ブロック攻撃（3秒ごと）
         bossAttackTimer++;
         if (bossAttackTimer >= 180) {
           let startY = 10 + (Math.floor(Math.random() * bossPattern.length)) * 22;
-          // ①ランダム反射ブロック
           bossBlocks.push({ x: bossOffsetX, y: startY, w: 15, h: 15, vx: -16, vy: 16 * (Math.random() < 0.5 ? 1 : -1) });
           
-          // ②狙い撃ちブロック（プレイヤーの位置へ一直線）
           let angle = Math.atan2(player.y - startY, player.x - bossOffsetX);
           bossTargetBlocks.push({ x: bossOffsetX, y: startY, w: 15, h: 15, vx: Math.cos(angle) * 10, vy: Math.sin(angle) * 10 });
-
           bossAttackTimer = 0;
         }
 
-        // 反射ブロックの移動
         for (let i = bossBlocks.length - 1; i >= 0; i--) {
           let bb = bossBlocks[i];
           bb.x += bb.vx;
@@ -216,7 +209,6 @@
           }
         }
 
-        // 狙い撃ちブロックの移動と撃ち落とし判定
         for (let i = bossTargetBlocks.length - 1; i >= 0; i--) {
           let tb = bossTargetBlocks[i];
           tb.x += tb.vx;
@@ -225,7 +217,6 @@
           if (tb.x < 0 || tb.x > canvas.width || tb.y < 0 || tb.y > canvas.height) {
             bossTargetBlocks.splice(i, 1); continue;
           }
-
           if (rectIntersect(tb, player)) {
             player.hp -= 1;
             bossTargetBlocks.splice(i, 1);
@@ -233,9 +224,7 @@
           }
         }
 
-        if (bossParts.length === 0 && bossOffsetX <= 800) {
-          gameClear = true;
-        }
+        if (bossParts.length === 0 && bossOffsetX <= 800) gameClear = true;
       } else {
         let hitEdge = false;
         enemies.forEach(e => {
@@ -260,19 +249,16 @@
         }
       }
 
-      // 敵の壁の移動
       walls.forEach(w => {
         w.y += w.speed;
         if (w.y < 0 || w.y + w.h > canvas.height) w.speed *= -1;
       });
 
-      // ビームの移動と当たり判定
       for (let i = bullets.length - 1; i >= 0; i--) {
         let b = bullets[i];
         b.x += b.vx;
         b.y += b.vy;
 
-        // 上下の枠で跳ね返る
         if (b.y <= 0 || b.y + b.h >= canvas.height) {
           b.vy *= -1;
           b.y = b.y <= 0 ? 1 : canvas.height - b.h - 1;
@@ -283,7 +269,6 @@
           continue;
         }
 
-        // 安全地帯との判定（ダメージ処理）
         let hitSafeWall = false;
         if (b.isEnemyBullet) {
           for (let j = safeWalls.length - 1; j >= 0; j--) {
@@ -301,7 +286,6 @@
         if (hitSafeWall) continue;
 
         let hitWall = false;
-        // 敵の壁との判定（ダメージ処理）
         for (let j = walls.length - 1; j >= 0; j--) {
           let w = walls[j];
           if (!hitWall && rectIntersect(b, w)) {
@@ -320,7 +304,6 @@
         if (hitWall) continue;
 
         if (isBossBattle) {
-          // ボスの狙い撃ちブロック撃ち落とし
           let hitTargetBlock = false;
           if (!b.isEnemyBullet) {
             for (let j = bossTargetBlocks.length - 1; j >= 0; j--) {
@@ -334,7 +317,6 @@
           }
           if (hitTargetBlock) continue;
 
-          // ボスの壁との判定
           for (let j = bossWalls.length - 1; j >= 0; j--) {
             if (rectIntersect(b, bossWalls[j])) {
               if (b.isBig) {
@@ -349,7 +331,6 @@
           }
           if (hitWall) continue;
 
-          // ボス本体（OBJ）との判定
           if (!b.isEnemyBullet) {
             for (let j = bossParts.length - 1; j >= 0; j--) {
               if (rectIntersect(b, bossParts[j])) {
@@ -360,7 +341,6 @@
             }
           }
         } else {
-          // 通常の敵との判定
           let hitEnemy = false;
           enemies.forEach(e => {
             if (e.active && !b.isEnemyBullet && rectIntersect(b, e)) {
@@ -374,7 +354,6 @@
           if (hitEnemy) continue;
         }
 
-        // プレイヤー被弾判定
         if (b.isEnemyBullet && rectIntersect(b, player)) {
           player.hp -= 1;
           bullets.splice(i, 1);
@@ -386,56 +365,45 @@
     function draw() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       
-      // 安全地帯（緑）
       ctx.fillStyle = "lime";
       safeWalls.forEach(sw => ctx.fillRect(sw.x, sw.y, sw.w, sw.h));
-
-      // プレイヤー（緑）
-      ctx.fillStyle = "lime";
       ctx.fillRect(player.x, player.y, player.w, player.h);
 
-      // HP・チャージ表示
       ctx.fillStyle = "white";
       ctx.font = "16px sans-serif";
       ctx.fillText(`HP: ${player.hp}`, 10, 20);
+      
+      let displayCharge = Math.max(enterCharge, spaceCharge);
+      let chargePercent = Math.min(100, Math.floor((displayCharge / 180) * 100));
+      
       if (isBossBattle) {
-        let chargePercent = Math.min(100, Math.floor((chargeTime / 180) * 100));
         ctx.fillStyle = chargePercent === 100 ? "yellow" : "white";
-        ctx.fillText(`CHARGE (Enter): ${chargePercent}%`, 100, 20);
+        ctx.fillText(`CHARGE: ${chargePercent}%`, 100, 20);
       } else {
         let activeCount = enemies.filter(e => e.active).length;
         ctx.fillText(`ENEMY: ${activeCount}`, 100, 20);
-        
-        let chargePercent = Math.min(100, Math.floor((chargeTime / 180) * 100));
         ctx.fillStyle = chargePercent === 100 ? "yellow" : "white";
         ctx.fillText(`CHARGE: ${chargePercent}%`, 250, 20);
       }
 
-      // ビーム
       bullets.forEach(b => {
         if (b.isBig) ctx.fillStyle = "cyan";
         else ctx.fillStyle = b.isEnemyBullet ? "orange" : "white";
         ctx.fillRect(b.x, b.y, b.w, b.h);
       });
 
-      // 敵の壁（青）
       ctx.fillStyle = "cyan";
       walls.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
 
       if (isBossBattle) {
-        // ボスが投げてくる紫ブロック（反射＆狙い撃ち）
         ctx.fillStyle = "#8a2be2";
         bossBlocks.forEach(bb => ctx.fillRect(bb.x, bb.y, bb.w, bb.h));
         bossTargetBlocks.forEach(tb => ctx.fillRect(tb.x, tb.y, tb.w, tb.h));
-
-        // ボス壁（青紫）
-        ctx.fillStyle = "#8a2be2";
         bossWalls.forEach(bw => ctx.fillRect(bw.x, bw.y, bw.w, bw.h));
-        // ボス本体（赤）
+        
         ctx.fillStyle = "red";
         bossParts.forEach(bp => ctx.fillRect(bp.x, bp.y, bp.w, bp.h));
       } else {
-        // 敵（赤）
         ctx.fillStyle = "red";
         enemies.forEach(e => {
           if (e.active) ctx.fillRect(e.x, e.y, e.w, e.h);
