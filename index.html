@@ -22,8 +22,8 @@
     let enemies = [];
     let walls = [];
     let safeWalls = [
-      { x: 100, y: 80, w: 20, h: 60 },  // 安全地帯1（壁約2個分の高さ）
-      { x: 100, y: 260, w: 20, h: 60 }  // 安全地帯2
+      { x: 100, y: 80, w: 20, h: 60, hp: 10 },
+      { x: 100, y: 260, w: 20, h: 60, hp: 10 }
     ];
     let keys = {};
     let prevSpace = false;
@@ -45,10 +45,10 @@
       }
     }
     
-    // 敵の壁を3列配置（動く壁）
+    // 敵の壁を3列配置（動く壁、HP10）
     for (let c = 0; c < 3; c++) {
       for (let r = 0; r < 5; r++) {
-        walls.push({ x: 500 + c * 80, y: 40 + r * 70, w: 15, h: 10, speed: 2 * (c % 2 === 0 ? 1 : -1) });
+        walls.push({ x: 500 + c * 80, y: 40 + r * 70, w: 20, h: 10, hp: 10, speed: 2 * (c % 2 === 0 ? 1 : -1) });
       }
     }
 
@@ -200,32 +200,40 @@
           continue;
         }
 
-        // 安全地帯との判定（自分の弾は貫通、敵の弾は跳ね返す）
+        // 安全地帯との判定（ダメージ処理）
         let hitSafeWall = false;
         if (b.isEnemyBullet) {
-          safeWalls.forEach(sw => {
+          for (let j = safeWalls.length - 1; j >= 0; j--) {
+            let sw = safeWalls[j];
             if (!hitSafeWall && rectIntersect(b, sw)) {
-              b.vx *= -1; // 再度右へ跳ね返す
-              b.isEnemyBullet = false; // 自分の弾に戻る
+              b.vx *= -1; 
+              b.isEnemyBullet = false; 
               hitSafeWall = true;
+              sw.hp -= 1;
+              sw.w -= 2; 
+              if (sw.hp <= 0) safeWalls.splice(j, 1);
             }
-          });
+          }
         }
         if (hitSafeWall) continue;
 
         let hitWall = false;
-        // 敵の壁との判定
-        walls.forEach(w => {
+        // 敵の壁との判定（ダメージ処理）
+        for (let j = walls.length - 1; j >= 0; j--) {
+          let w = walls[j];
           if (!hitWall && rectIntersect(b, w)) {
             if (b.isBig) {
-              w.x = -1000; 
+              walls.splice(j, 1); 
             } else {
               b.vx *= -1;
               b.isEnemyBullet = true;
               hitWall = true;
+              w.hp -= 1;
+              w.w -= 2; // 1ダメージごとに削る
+              if (w.hp <= 0) walls.splice(j, 1);
             }
           }
-        });
+        }
         if (hitWall) continue;
 
         if (isBossBattle) {
