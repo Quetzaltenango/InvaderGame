@@ -11,7 +11,7 @@
 <body>
   <h1>インベーダーゲーム</h1>
   <p>上下左右キー：移動 / スペースキー：ビーム（ボス戦は長押しで貫通ビーム）</p>
-  <canvas id="gameCanvas" width="600" height="400"></canvas>
+  <canvas id="gameCanvas" width="1200" height="400"></canvas>
 
   <script>
     const canvas = document.getElementById("gameCanvas");
@@ -21,6 +21,10 @@
     let bullets = [];
     let enemies = [];
     let walls = [];
+    let safeWalls = [
+      { x: 100, y: 80, w: 20, h: 60 },  // 安全地帯1（壁約2個分の高さ）
+      { x: 100, y: 260, w: 20, h: 60 }  // 安全地帯2
+    ];
     let keys = {};
     let prevSpace = false;
     let enemyDir = 1;
@@ -30,21 +34,21 @@
     // ボス戦用変数
     let isBossBattle = false;
     let chargeTime = 0;
-    let bossOffsetX = 600;
+    let bossOffsetX = 1200;
     let bossParts = [];
     let bossWalls = [];
 
-    // 敵を100体（10列×10行）配置
+    // 敵を100体（10列×10行）右側に配置
     for (let c = 0; c < 10; c++) {
       for (let r = 0; r < 10; r++) {
-        enemies.push({ x: 350 + c * 20, y: 30 + r * 30, w: 15, h: 10, active: true });
+        enemies.push({ x: 800 + c * 30, y: 30 + r * 30, w: 15, h: 10, active: true });
       }
     }
     
-    // 壁を3列配置（動く壁）
+    // 敵の壁を3列配置（動く壁）
     for (let c = 0; c < 3; c++) {
       for (let r = 0; r < 5; r++) {
-        walls.push({ x: 150 + c * 60, y: 40 + r * 70, w: 15, h: 10, speed: 2 * (c % 2 === 0 ? 1 : -1) });
+        walls.push({ x: 500 + c * 80, y: 40 + r * 70, w: 15, h: 10, speed: 2 * (c % 2 === 0 ? 1 : -1) });
       }
     }
 
@@ -90,11 +94,11 @@
     function update() {
       if (gameOver || gameClear) return;
 
-      // プレイヤー移動
+      // プレイヤー移動（左側1/3のエリアのみ移動可能）
       if (keys["ArrowUp"] && player.y > 0) player.y -= player.speed;
       if (keys["ArrowDown"] && player.y < canvas.height - player.h) player.y += player.speed;
       if (keys["ArrowLeft"] && player.x > 0) player.x -= player.speed;
-      if (keys["ArrowRight"] && player.x < canvas.width / 2) player.x += player.speed;
+      if (keys["ArrowRight"] && player.x < canvas.width / 3) player.x += player.speed;
 
       let activeCount = enemies.filter(e => e.active).length;
 
@@ -102,7 +106,7 @@
       if (activeCount === 0 && !isBossBattle) {
         isBossBattle = true;
         initBoss();
-        bullets = []; // 画面の玉をリセット
+        bullets = []; 
       }
 
       // ビーム発射制御
@@ -120,7 +124,7 @@
         if (keys["Space"]) {
           chargeTime++;
         } else if (prevSpace && !keys["Space"]) {
-          if (chargeTime >= 180) { // 約3秒 (60FPS想定)
+          if (chargeTime >= 180) { 
             bullets.push({ x: player.x + player.w, y: player.y - 5, w: 30, h: 30, vx: 10, vy: 0, isBig: true });
           } else {
             bullets.push({ x: player.x + player.w, y: player.y + player.h / 2 - 2, w: 8, h: 4, vx: 8, vy: 0 });
@@ -135,7 +139,7 @@
 
       // ボス戦／通常戦の更新
       if (isBossBattle) {
-        if (bossOffsetX > 320) bossOffsetX -= 2;
+        if (bossOffsetX > 800) bossOffsetX -= 2;
         
         let updateBossBlocks = (blocks) => {
           blocks.forEach(b => {
@@ -146,7 +150,7 @@
         updateBossBlocks(bossWalls);
         updateBossBlocks(bossParts);
 
-        if (bossParts.length === 0 && bossOffsetX <= 320) {
+        if (bossParts.length === 0 && bossOffsetX <= 800) {
           gameClear = true;
         }
       } else {
@@ -155,7 +159,6 @@
           if (e.active) {
             e.y += curSpeed * enemyDir;
             if (e.y < 0 || e.y + e.h > canvas.height) hitEdge = true;
-            // 敵がプレイヤーに接触
             if (rectIntersect(e, player)) {
               player.hp -= 1;
               e.active = false;
@@ -174,7 +177,7 @@
         }
       }
 
-      // 壁の移動
+      // 敵の壁の移動
       walls.forEach(w => {
         w.y += w.speed;
         if (w.y < 0 || w.y + w.h > canvas.height) w.speed *= -1;
@@ -186,10 +189,9 @@
         b.x += b.vx;
         b.y += b.vy;
 
-        // 上下の壁で跳ね返る
+        // 上下の枠で跳ね返る
         if (b.y <= 0 || b.y + b.h >= canvas.height) {
           b.vy *= -1;
-          // 画面外に飛び出さないよう補正
           b.y = b.y <= 0 ? 1 : canvas.height - b.h - 1;
         }
 
@@ -198,12 +200,25 @@
           continue;
         }
 
+        // 安全地帯との判定（自分の弾は貫通、敵の弾は跳ね返す）
+        let hitSafeWall = false;
+        if (b.isEnemyBullet) {
+          safeWalls.forEach(sw => {
+            if (!hitSafeWall && rectIntersect(b, sw)) {
+              b.vx *= -1; // 再度右へ跳ね返す
+              b.isEnemyBullet = false; // 自分の弾に戻る
+              hitSafeWall = true;
+            }
+          });
+        }
+        if (hitSafeWall) continue;
+
         let hitWall = false;
-        // 通常の壁との判定
+        // 敵の壁との判定
         walls.forEach(w => {
           if (!hitWall && rectIntersect(b, w)) {
             if (b.isBig) {
-              w.x = -1000; // 巨大ビームは壁を破壊
+              w.x = -1000; 
             } else {
               b.vx *= -1;
               b.isEnemyBullet = true;
@@ -218,13 +233,13 @@
           for (let j = bossWalls.length - 1; j >= 0; j--) {
             if (rectIntersect(b, bossWalls[j])) {
               if (b.isBig) {
-                bossWalls.splice(j, 1); // 巨大ビームでボス壁破壊
+                bossWalls.splice(j, 1); 
               } else {
                 b.vx *= -1;
                 b.isEnemyBullet = true;
                 hitWall = true;
               }
-              break; // 1つの玉で同時に複数壊さない
+              break; 
             }
           }
           if (hitWall) continue;
@@ -234,7 +249,7 @@
             for (let j = bossParts.length - 1; j >= 0; j--) {
               if (rectIntersect(b, bossParts[j])) {
                 bossParts.splice(j, 1);
-                if (!b.isBig) bullets.splice(i, 1); // 通常弾は消える（貫通しない）
+                if (!b.isBig) bullets.splice(i, 1); 
                 break;
               }
             }
@@ -254,7 +269,7 @@
           if (hitEnemy) continue;
         }
 
-        // プレイヤー被弾判定（跳ね返った玉）
+        // プレイヤー被弾判定
         if (b.isEnemyBullet && rectIntersect(b, player)) {
           player.hp -= 1;
           bullets.splice(i, 1);
@@ -266,6 +281,10 @@
     function draw() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       
+      // 安全地帯（緑）
+      ctx.fillStyle = "lime";
+      safeWalls.forEach(sw => ctx.fillRect(sw.x, sw.y, sw.w, sw.h));
+
       // プレイヤー（緑）
       ctx.fillStyle = "lime";
       ctx.fillRect(player.x, player.y, player.w, player.h);
@@ -290,7 +309,7 @@
         ctx.fillRect(b.x, b.y, b.w, b.h);
       });
 
-      // 通常の壁（青）
+      // 敵の壁（青）
       ctx.fillStyle = "cyan";
       walls.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
 
@@ -312,11 +331,11 @@
       if (gameClear) {
         ctx.fillStyle = "yellow";
         ctx.font = "40px sans-serif";
-        ctx.fillText("ALL CLEAR!!", 180, 200);
+        ctx.fillText("ALL CLEAR!!", canvas.width / 2 - 120, 200);
       } else if (gameOver) {
         ctx.fillStyle = "red";
         ctx.font = "40px sans-serif";
-        ctx.fillText("GAME OVER", 180, 200);
+        ctx.fillText("GAME OVER", canvas.width / 2 - 120, 200);
       }
     }
 
